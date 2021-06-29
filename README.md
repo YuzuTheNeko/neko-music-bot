@@ -3,7 +3,7 @@
 To use it, clone this repository and create a file `config.json`:
 ```json
 {
-    "token": "bot token"
+    "token": "bot token", 
     "prefix": "your prefix"
 }
 ```

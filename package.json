@@ -4,6 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "deploy": "git add . && git commit -m \"github update\" && git push -u origin main",
     "bot": "tsc && node dist/index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
