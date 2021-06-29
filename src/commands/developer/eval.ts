@@ -4,6 +4,15 @@ import { inspect } from "util";
 export default new Command({
     name: "eval",
     description: "a eval command.",
+    args: [
+        {
+            name: "code",
+            required: true,
+            description: "the code to execute.",
+            type: "STRING",
+            example: "function gay() { return \"luna\" }"
+        }
+    ],
     execute: async (client, message, args, command, extras) => {
         const depth = extras.flags.depth ? Number(extras.flags.depth) || Infinity : 0 
  

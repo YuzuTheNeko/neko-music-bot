@@ -1,5 +1,5 @@
 import { VoiceConnection } from "@discordjs/voice";
-import { Message, TextChannel } from "discord.js";
+import { Channel, GuildMember, Message, TextChannel, User } from "discord.js";
 import NekoClient from "../structures/Client";
 import Command from "../structures/Command";
 import Track from "../structures/Track";
@@ -7,7 +7,7 @@ import Track from "../structures/Track";
 export interface Extras {
     prefix: string
     flags: any
-    command: Command
+    command: string
 }
 
 export type LoopType = "NONE" | "SONG" | "QUEUE"
@@ -28,6 +28,17 @@ export interface GuildAudioData {
     allSongs: Track[]
 }
 
+export interface ArgumentOptions {
+    name: string 
+    example?: string 
+    default?: (m: Message) => any
+    required?: boolean
+    type: "USER" | "STRING" | "MEMBER" | "CHANNEL" | "TIME" | "NUMBER"
+    min?: number
+    max?: number
+    description?: string
+}
+
 export interface TrackData {
     title: string 
     uri: string
@@ -41,8 +52,8 @@ export interface CommandData {
     description: string
     category?: string 
     owner?: boolean
-    args?: string[]
+    args?: ArgumentOptions[]
     aliases?: string[]
 
-    execute(client: NekoClient, message: Message, args: string[], command: Command, extras: Extras): unknown
+    execute(client: NekoClient, message: Message, args: Array<User | GuildMember | Channel | string | number>, command: Command, extras: Extras): unknown
 }
