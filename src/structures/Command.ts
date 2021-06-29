@@ -1,4 +1,4 @@
-import { Message } from "discord.js";
+import { Message, MessageButton, MessageComponentInteraction } from "discord.js";
 import { CommandData, Extras } from "../typings/typings";
 import NekoClient from "./Client";
 import { owners } from "../config.json"
@@ -48,7 +48,32 @@ export default class Command {
 
         const command = client.manager.commands.get(cmd) ?? client.manager.commands.find(c => c.data.name.replace(/-/g, "") === cmd?.replace(/-/g, "") || (c.data.aliases ? c.data.aliases.includes(cmd) : false)) 
 
-        if (!command) return undefined
+        if (!command) {
+            const button = new MessageButton()
+            .setCustomID("idk")
+            .setStyle("DANGER")
+            .setLabel("Dismiss")
+
+            const didYouMean = client.manager.commands.find(c => c.data.name.includes(cmd) || (c.data.aliases ? c.data.aliases.some(a => a.includes(cmd)) : false))
+
+            const m = await message.reply({
+                content: `That command does not exist!${didYouMean ? ` Did you mean to use \`${prefix}${didYouMean.data.name}\`?` : ""}`, 
+                components: [[button]]
+            }).catch(() => null)
+
+            if (!m) return undefined
+
+            const filter = (i: MessageComponentInteraction) => i.user.id === message.author.id
+            
+            await m.awaitMessageComponentInteraction({ filter, time: 15000 })
+            .then(() => m.delete().catch(() => null))
+            .catch(() => m.edit({
+                content: m.content,
+                components: []
+            }).catch(() => null))
+
+            return undefined
+        }
 
         const extras: Extras = {
             prefix,
