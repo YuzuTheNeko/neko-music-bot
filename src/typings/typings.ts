@@ -7,6 +7,7 @@ import Track from "../structures/Track";
 export interface Extras {
     prefix: string
     flags: any
+    retries: number
     command: string
 }
 
@@ -28,9 +29,16 @@ export interface GuildAudioData {
     allSongs: Track[]
 }
 
+export interface PromptOptions {
+    retries: number
+    timeout: number
+    error?: (m: Message) => any 
+}
+
 export interface ArgumentOptions {
     name: string 
     example?: string 
+    regexes?: RegExp[]
     default?: (m: Message) => any
     required?: boolean
     type: "USER" | "STRING" | "MEMBER" | "CHANNEL" | "TIME" | "NUMBER"
@@ -50,6 +58,7 @@ export interface TrackData {
 export interface CommandData {
     name: string
     description: string
+    prompt?: PromptOptions 
     category?: string 
     owner?: boolean
     args?: ArgumentOptions[]

@@ -1,15 +1,16 @@
-import { AudioPlayerStatus, AudioResource, createAudioPlayer, createAudioResource, joinVoiceChannel, PlayerSubscription, StreamType, VoiceConnection } from "@discordjs/voice";
+import { AudioPlayerStatus, AudioResource, createAudioPlayer, createAudioResource, joinVoiceChannel, PlayerSubscription, ProbeInfo, StreamType, VoiceConnection } from "@discordjs/voice";
 import { Collection, Guild, Snowflake, TextChannel, User } from "discord.js";
 import { createWriteStream, existsSync, stat } from "fs";
 import ytdl from "../functions/ytdl";
 import { GuildAudioData, TrackData } from "../typings/typings";
 import Manager from "./Manager";
 import Track from "./Track";
-const prism = require("prism-media")
+import { FFmpeg } from "prism-media";
 
 export default class GuildAudioPlayer {
     manager: Manager
     guildID: Snowflake
+    resource?: AudioResource 
     data: GuildAudioData
     player = createAudioPlayer()
     saveQueue = new Collection<string, Track>()
@@ -24,7 +25,9 @@ export default class GuildAudioPlayer {
         this.data = GuildAudioPlayer.defaultAudioData
     } 
 
-    onError() {
+    onError(err: any) {
+        console.error(err)
+        this.data.channel?.send(`An error occurred. ${err.message ?? ""}`)
         this.destroy()
     }
 
@@ -69,6 +72,8 @@ export default class GuildAudioPlayer {
     }
 
     onFinish() {
+        delete this.resource
+
         this.data.lastMessage?.delete().catch(() => null)
 
         if ([0, 2].includes(this.data.loopType)) this.data.songs.shift()
@@ -101,7 +106,7 @@ export default class GuildAudioPlayer {
         if (this.subscribedPlayer) return this.subscribedPlayer
         this.subscribedPlayer = this.data.connection?.subscribe(this.player)
         
-        this.player.on("error", this.onError)
+        this.player.on("error", this.onError.bind(this))
         this.player.on("stateChange", (oldS, newS) => {
             if (oldS.status === AudioPlayerStatus.Buffering && newS.status === AudioPlayerStatus.Playing) {
                 this.onStart()
@@ -129,15 +134,19 @@ export default class GuildAudioPlayer {
 
         if (buffer instanceof AudioResource) {
             this.player.play(buffer)
-        } else {
+        }
+        /**
+         *  else {
+            return undefined
             const resource = createAudioResource(buffer.stream, {
+                metadata: this,
                 inputType: buffer.type
             })
 
             this.player.play(resource)
         }
-
-        this.saveSong(track)
+         * 
+         */
     }
 
     async seek(time: string) {
@@ -174,50 +183,40 @@ export default class GuildAudioPlayer {
     }
 
     saveSong(track: Track): Promise<boolean | undefined> {
-        if (this.saveQueue.has(track.data.uri)) {
-            return Promise.resolve(undefined)
-        } else {
-            if (existsSync(`songs/${track.data.uri}.mp3`)) {
-                return Promise.resolve(true)
-            }
-            this.saveQueue.set(track.data.uri, track)
-        }
-
-        return new Promise(async (resolve) => {
-            const audio = await ytdl(track.data.url)
-
-            audio.stream.pipe(createWriteStream(`songs/${track.data.uri}.mp3`), { end: true })
-            .once("finish", () => {
-                this.saveQueue.delete(track.data.uri)
-                resolve(true)
-            })
-        })
+        return Promise.resolve(undefined)
     }
 
     async getSongStream(track: Track, seekTime?: string) {
-        if (existsSync(`songs/${track.data.uri}.mp3`)) {
-            if (this.saveQueue.has(track.data.uri)) {
-                return undefined
-            }
-            if (seekTime) {
-                const stream = new prism.FFmpeg({
-                    args: ['-ss', seekTime, '-i', `songs/${track.data.uri}.mp3`, ...GuildAudioPlayer.FFMPEG_ARGUMENTS],
-                });
-    
-                return createAudioResource(stream, {
-                    inputType: StreamType.Raw
-                })
-            } else {
-                const stream = new prism.FFmpeg({
-                    args: ['-ss', "0s", '-i', `songs/${track.data.uri}.mp3`, ...GuildAudioPlayer.FFMPEG_ARGUMENTS],
-                });
-    
-                return createAudioResource(stream, {
-                    inputType: StreamType.Raw
-                })
-            }
+        if (this.resource && seekTime) {
+            const resource = this.resource
+
+            const stream = new FFmpeg({
+                args: ["-ss", seekTime],
+            });
+
+            resource.playStream.pipe(stream)
+
+            return resource
+        } else if (seekTime) {
+            return false
         } else {
-            return await ytdl(track.data.url)
+            const resource = await ytdl(track.data.url)
+
+            const stream = new FFmpeg({
+                args: GuildAudioPlayer.FFMPEG_ARGUMENTS
+            })
+
+            resource.stream.pipe(stream)
+
+            this.resource = createAudioResource(stream, {
+                inputType: StreamType.Raw,
+                inlineVolume: true
+            })
+            
+            return createAudioResource(resource.stream, {
+                inlineVolume: true,
+                inputType: resource.type
+            })
         }
     }
 

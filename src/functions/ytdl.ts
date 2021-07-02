@@ -1,5 +1,5 @@
 import { createAudioResource, demuxProbe, ProbeInfo } from '@discordjs/voice';
-import { raw as ytdl } from 'youtube-dl-exec';
+import { raw as ytdl } from "youtube-dl-exec"
 
 export default function(url: string): Promise<ProbeInfo> {
     return new Promise((resolve, reject) => {

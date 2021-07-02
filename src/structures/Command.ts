@@ -2,6 +2,7 @@ import { Message, MessageButton, MessageComponentInteraction, MessageEmbed, Snow
 import { ArgumentOptions, CommandData, Extras } from "../typings/typings";
 import NekoClient from "./Client";
 import { owners } from "../config.json"
+import { noop } from "@discordjs/voice/dist/util/util";
 
 export default class Command {
     data: CommandData
@@ -77,6 +78,7 @@ export default class Command {
 
         const extras: Extras = {
             prefix,
+            retries: 0, 
             command: cmd, 
             flags
         }
@@ -92,10 +94,132 @@ export default class Command {
 
             await command.run(message, parsed_args, extras)
         } catch (error) {
+            console.error(error)
             message.channel.send(`An error occurred! ${error.message}`)
         }
     }
 
+    async promptArg(message: Message, extras: Extras, arg: ArgumentOptions, input: any | undefined, invalid?: boolean, firstRetry?: boolean): Promise<undefined | any> {
+        if (firstRetry) {
+            extras.retries--
+        }
+        
+        if (!input || invalid) {
+            if (invalid) {
+                const m = await message.channel.send(`Provided argument(s) \`${input?.replace(/`/g, "").slice(0, 100)}\` does not match argument \`${arg.name}\`, which takes a **${arg.type[0] + arg.type.slice(1).toLowerCase()}** as valid input.\nPlease try again inputting a valid argument this time.`)
+            
+                const filter = (m: Message) => m.author.id === message.author.id
+    
+                const collected = await message.channel.awaitMessages({ filter, time: this.data.prompt?.timeout, max: 1, errors: ["time"] })
+                .catch(noop)
+    
+                if (!collected) {
+                    const msg = this.data.prompt?.error?.(message)
+    
+                    message.channel.send(
+                        msg ?? `${message.author} did not answer within ${require("ms-utility")(this.data.prompt?.timeout).toString()}.`
+                    )
+    
+                    return undefined
+                } 
+    
+                input = collected.first()?.content
+    
+                return await this.promptArg(message, extras, arg, input)
+            }
+
+            const m = await message.channel.send(`The command expects the \`${arg.name}\` argument, which takes a **${arg.type[0] + arg.type.slice(1).toLowerCase()}** as valid input.\nPlease provide this argument below.`)
+            
+            const filter = (m: Message) => m.author.id === message.author.id
+
+            const collected = await message.channel.awaitMessages({ filter, time: this.data.prompt?.timeout, max: 1, errors: ["time"] })
+            .catch(noop)
+
+            if (!collected) {
+                const msg = this.data.prompt?.error?.(message)
+
+                message.channel.send(
+                    msg ?? `${message.author} did not answer within ${require("ms-utility")(this.data.prompt?.timeout).toString()}.`
+                )
+
+                return undefined
+            } 
+
+            input = collected.first()?.content
+
+            return await this.promptArg(message, extras, arg, input)
+        }
+        
+        if (input === undefined) {
+            message.channel.send(`${message.author} Internal error, prompt canceled.`)
+            return undefined
+        }
+
+        const old = input
+
+        const reject = async () => {
+            extras.retries++ 
+
+            if (extras.retries === this.data.prompt?.retries) {
+                message.channel.send(`${message.author} too many retries, prompt canceled.`)
+                return undefined
+            }
+
+            return await this.promptArg(message, extras, arg, old, true)
+        }
+
+        if (arg.type === "STRING") {
+            if (arg.max) {
+                if (input.length > arg.max) {
+                    return await reject()
+                }
+            }
+
+            if (arg.min) {
+                if (input.length < arg.min) {
+                    return await reject()
+                }
+            }
+
+            if (arg.regexes) {
+                if (!arg.regexes.every(reg => reg.test(input))) {
+                    return await reject()
+                }
+            }
+        } else if (arg.type === "USER") {
+            input = await this.client?.users.fetch(input.replace(/[@!<>]/g, "") as Snowflake).catch(() => null)
+            if (!input) return await reject()
+        } else if (arg.type === "CHANNEL") {
+            input = message.guild?.channels.cache.get(input.replace(/[#<>]/g, "") as Snowflake)
+            if (!input) return await reject()
+        } else if (arg.type === "MEMBER") {
+            input = await message.guild?.members.fetch(input.replace(/[@!<>]/g, "") as Snowflake).catch(() => null)
+            if (!input) return await reject()
+        } else if (arg.type === "NUMBER") {
+            const n = parseInt(input)
+            if (isNaN(n)) return reject()
+            if (arg.max) {
+                if (n > arg.max) {
+                    return await reject()
+                }
+            }
+
+            if (arg.min) {
+                if (n < arg.min) {
+                    return await reject()
+                }
+            }
+        } else if (arg.type === "TIME") {
+            const ms = require("ms-utility")(input)
+            if (!ms || !ms.ms) return await reject()
+            else input = ms
+        }
+
+        extras.retries = 0
+
+        return input as any
+    }
+    
     onArgsError(message: Message, extras: Extras, arg: ArgumentOptions, input: string | undefined): boolean {
         const embed = new MessageEmbed()
         .setColor("RED")
@@ -118,6 +242,10 @@ export default class Command {
 
         if (arg.example) embed.addField(`Argument Example`, `\`${arg.example}\``)
         
+        if (arg.regexes) embed.addField(`Argument RegExp Tests`, arg.regexes.map(e => e.source).join("\n"))
+        if (arg.min) embed.addField(`Argument Min. Length`, arg.min.toLocaleString())
+        if (arg.max) embed.addField(`Arg Max. Length`, arg.max.toLocaleString())
+
         embed.addField(`Command Usage`, `\`\`\`\n${extras.prefix}${extras.command} ${this.data.args?.map(a => a.required ? `<${a.name}>` : `[${a.name}]`).join(" ")}\`\`\``)
 
         if (this.data.args?.every(c => c.example)) {
@@ -143,11 +271,19 @@ export default class Command {
             const current: string = this.data.args[i+1] === undefined ? args.slice(i).join(" ") : args[i]
 
             const reject = this.onArgsError.bind(this, message, extras, arg, current)
-
+            const prompt = this.promptArg.bind(this, message, extras, arg, current)
+            
             let data: any = current || (arg.default ? arg.default(message) : undefined)
 
             if (!data && data !== false && data !== 0 && arg.required) {
-                return reject()    
+                if (!this.data.prompt) {
+                    return reject()
+                } else {
+                    data = await prompt()
+                    if (data === undefined) return false
+                    else args[i] = data
+                    continue;
+                }
             }
 
             if (!data && data !== false && data !== 0 && !arg.required) {
@@ -157,8 +293,31 @@ export default class Command {
                 continue; 
             }
 
-            if (arg.type === "STRING") {
+            if (this.data.prompt) {
+                data = await prompt(false, true)
+                if (data === undefined) return false
+                else args[i] = data
+                continue; 
+            }
 
+            if (arg.type === "STRING") {
+                if (arg.max) {
+                    if (data.length > arg.max) {
+                        return reject()
+                    }
+                }
+
+                if (arg.min) {
+                    if (data.length < arg.min) {
+                        return reject()
+                    }
+                }
+
+                if (arg.regexes) {
+                    if (!arg.regexes.every(reg => reg.test(data))) {
+                        return reject()
+                    }
+                }
             } else if (arg.type === "USER") {
                 data = await this.client?.users.fetch(data.replace(/[@!<>]/g, "") as Snowflake).catch(() => null)
                 if (!data) return reject()
@@ -171,6 +330,17 @@ export default class Command {
             } else if (arg.type === "NUMBER") {
                 const n = parseInt(data)
                 if (isNaN(n)) return reject()
+                if (arg.max) {
+                    if (data > arg.max) {
+                        return reject()
+                    }
+                }
+
+                if (arg.min) {
+                    if (data < arg.min) {
+                        return reject()
+                    }
+                }
             } else if (arg.type === "TIME") {
                 const ms = require("ms-utility")(data)
                 if (!ms || !ms.ms) return reject()

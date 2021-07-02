@@ -36,7 +36,7 @@ export default new Command({
                 const search = require("yt-search")
                 const { parentPort } = require("worker_threads")
                 parentPort.once("message", async (id) => {
-                    const data = await search({ videoId: id.split("=")[1].split("&")[0] })
+                    const data = await search({ videoId: id.split("=")[1]?.split("&")[0] ?? id })
 
                     parentPort.postMessage({
                         title: data.title,
